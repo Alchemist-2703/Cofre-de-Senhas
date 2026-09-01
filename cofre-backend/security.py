@@ -3,7 +3,7 @@ import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -80,10 +80,20 @@ def criar_token_acesso(data: dict, expira_em: Optional[timedelta] = None) -> str
 # ================================
 
 def criptografar_dado(texto: str) -> str:
+    if not texto:
+        return ""
     return cipher_suite.encrypt(texto.encode('utf-8')).decode('utf-8')
 
 def descriptografar_dado(texto_criptografado: str) -> str:
-    return cipher_suite.decrypt(texto_criptografado.encode('utf-8')).decode('utf-8')
+    try:
+        if not texto_criptografado:
+            return ""
+        return cipher_suite.decrypt(texto_criptografado.encode('utf-8')).decode('utf-8')
+    except InvalidToken:
+        # Retorna um aviso legível em vez de estourar erro 500 no backend
+        return "[Chave incompatível ou dado corrompido]"
+    except Exception:
+        return "[Erro na descriptografia]"
 
 criptografar_senha = criptografar_dado
 descriptografar_senha = descriptografar_dado

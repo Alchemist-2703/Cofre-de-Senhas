@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
@@ -43,8 +43,14 @@ class RespostaVerificacao(BaseModel):
 
 class RecuperarAcessoSchema(BaseModel):
     email: EmailStr
-    respostas: list[RespostaVerificacao]
+    respostas: List[RespostaVerificacao]
     nova_master_password: str = Field(min_length=6)
+
+class AtualizarPerguntaSchema(BaseModel):
+    pergunta_id: int
+    nova_pergunta: Optional[str] = None
+    nova_resposta: Optional[str] = None
+    senha_master: str
 
 class SenhaCofreCreate(BaseModel):
     servico: str = Field(min_length=1)
@@ -61,8 +67,13 @@ class SenhaCofreResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class DeletarSenhaRequest(BaseModel):
+    tipo_confirmacao: str
+    senha_master: Optional[str] = None
+    resposta_seguranca: Optional[str] = None
+
 class PerfilUpdate(BaseModel):
-    usuario_atual_id: int
+    usuario_atual_id: Optional[int] = None
     nome: Optional[str] = None
     email: Optional[EmailStr] = None
     telefone: Optional[str] = None

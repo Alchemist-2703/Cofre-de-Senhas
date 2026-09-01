@@ -25,6 +25,11 @@ engine = create_engine(
     "check_same_thread": False
     })
 
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"prepare_threshold": 0} # Garante o valor como número inteiro (int)
+)
+
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
