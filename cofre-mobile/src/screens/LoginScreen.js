@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,14 +11,51 @@ import {
   ScrollView,
 } from 'react-native';
 import API from '../services/api';
+import {
+  isBiometriaAtivada,
+  obterTokenSeguro,
+  salvarTokenSeguro,
+  autenticarComBiometria,
+} from '../services/biometrics';
 
-// 🎨 COR DE FUNDO CUSTOMIZÁVEL
-const BACKGROUND_COLOR = '#1E3A8A'; // Mude aqui o tom de azul desejado
+const BACKGROUND_COLOR = '#1E3A8A';
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isCadastro, setIsCadastro] = useState(false);
+  const [temBiometriaDisponivel, setTemBiometriaDisponivel] = useState(false);
+
+  // 1. Verifica se a biometria já foi habilitada no perfil e se temos um token guardado
+  useEffect(() => {
+    checarEExecutarBiometria();
+  }, []);
+
+  const checarEExecutarBiometria = async () => {
+    const ativada = await isBiometriaAtivada();
+    const token = await obterTokenSeguro();
+
+    if (ativada && token) {
+      setTemBiometriaDisponivel(true);
+      // Tenta abrir a biometria automaticamente ao iniciar a tela
+      await executarLoginBiometrico(token);
+    }
+  };
+
+  const executarLoginBiometrico = async (tokenExistente = null) => {
+    const token = tokenExistente || (await obterTokenSeguro());
+    if (!token) return;
+
+    const sucesso = await autenticarComBiometria();
+    if (sucesso) {
+      // Aplica o token aos cabeçalhos da API para validar as requisições
+      API.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Dashboard' }],
+      });
+    }
+  };
 
   const handleAuth = async () => {
     if (!email || !password) {
@@ -36,7 +73,7 @@ export default function LoginScreen({ navigation }) {
         Alert.alert('Sucesso', 'Conta criada com sucesso! Faça login.');
         setIsCadastro(false);
       } else {
-        // Requisição para login
+        // Requisição para login tradicional
         const response = await API.post('/login-master', {
           email: email.trim(),
           master_password: password,
@@ -44,11 +81,17 @@ export default function LoginScreen({ navigation }) {
 
         const { access_token } = response.data;
 
-        // Define o Token JWT em todas as futuras requisições do Axios
+        // Salva o token de forma criptografada para acessos com biometria no futuro
+        await salvarTokenSeguro(access_token);
+
+        // Define o Token JWT no Axios
         API.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
 
         Alert.alert('Bem-vindo!', 'Login efetuado com sucesso.');
-        navigation.navigate('Dashboard');
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Dashboard' }],
+        });
       }
     } catch (error) {
       const msg = error.response?.data?.detail || 'Ocorreu um erro na conexão.';
@@ -92,13 +135,23 @@ export default function LoginScreen({ navigation }) {
             secureTextEntry
           />
 
-          {/* Link para Recuperação de Senha (exibido apenas no modo de login) */}
+          {/* Link para Recuperação de Senha */}
           {!isCadastro && (
             <TouchableOpacity
               style={styles.forgotButton}
               onPress={() => navigation.navigate('RecuperarSenha')}
             >
               <Text style={styles.forgotText}>Esqueceu a senha?</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Botão de Biometria (Exibido apenas se ativado no perfil e fora do modo cadastro) */}
+          {!isCadastro && temBiometriaDisponivel && (
+            <TouchableOpacity
+              style={styles.bioButton}
+              onPress={() => executarLoginBiometrico()}
+            >
+              <Text style={styles.bioButtonText}>👆 Entrar com Digital / Face ID</Text>
             </TouchableOpacity>
           )}
 
@@ -186,12 +239,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+  bioButton: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#1E3A8A',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  bioButtonText: {
+    color: '#1E3A8A',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
   button: {
     backgroundColor: '#1E3A8A',
     padding: 14,
     borderRadius: 8,
     alignItems: 'center',
-    marginTop: 6,
+    marginTop: 2,
   },
   buttonText: {
     color: '#FFFFFF',

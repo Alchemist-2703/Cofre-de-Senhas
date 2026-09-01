@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   SafeAreaView,
+  Modal,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import API from '../services/api';
@@ -19,7 +20,7 @@ export default function DashboardScreen({ navigation }) {
   const [senhas, setSenhas] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Estados do formulário
+  // Estados do formulário de cadastro
   const [servico, setServico] = useState('');
   const [identificador, setIdentificador] = useState('');
   const [novaSenha, setNovaSenha] = useState('');
@@ -28,8 +29,18 @@ export default function DashboardScreen({ navigation }) {
   // Visibilidade individual de senhas
   const [senhasVisiveis, setSenhasVisiveis] = useState({});
 
+  // Estados do Modal de Exclusão e Confirmação
+  const [modalVisible, setModalVisible] = useState(false);
+  const [senhaParaDeletar, setSenhaParaDeletar] = useState(null);
+  const [tipoConfirmacao, setTipoConfirmacao] = useState('senha'); // 'senha' ou 'pergunta'
+  const [senhaMestraInput, setSenhaMestraInput] = useState('');
+  const [respostaSegurancaInput, setRespostaSegurancaInput] = useState('');
+  const [perguntaTexto, setPerguntaTexto] = useState('');
+  const [deletando, setDeletando] = useState(false);
+
   useEffect(() => {
     carregarSenhas();
+    carregarPerguntaSeguranca();
   }, []);
 
   const carregarSenhas = async () => {
@@ -41,6 +52,17 @@ export default function DashboardScreen({ navigation }) {
       Alert.alert('Erro', 'Não foi possível carregar suas senhas.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const carregarPerguntaSeguranca = async () => {
+    try {
+      const res = await API.get('/perguntas');
+      if (res.data && res.data.pergunta) {
+        setPerguntaTexto(res.data.pergunta);
+      }
+    } catch (error) {
+      setPerguntaTexto('');
     }
   };
 
@@ -75,10 +97,50 @@ export default function DashboardScreen({ navigation }) {
     }));
   };
 
-  // Copia a senha para a área de transferência do celular
+  // Copia o texto exato da senha para a área de transferência
   const copiarSenha = async (senhaTexto) => {
+    if (!senhaTexto) return;
     await Clipboard.setStringAsync(senhaTexto);
     Alert.alert('Copiado!', 'Senha copiada para a área de transferência.');
+  };
+
+  const abrirModalDeletar = (item) => {
+    setSenhaParaDeletar(item);
+    setSenhaMestraInput('');
+    setRespostaSegurancaInput('');
+    setTipoConfirmacao('senha');
+    setModalVisible(true);
+  };
+
+  const confirmarExclusao = async () => {
+    if (tipoConfirmacao === 'senha' && !senhaMestraInput.trim()) {
+      Alert.alert('Atenção', 'Digite sua senha mestra.');
+      return;
+    }
+    if (tipoConfirmacao === 'pergunta' && !respostaSegurancaInput.trim()) {
+      Alert.alert('Atenção', 'Digite a resposta da pergunta de segurança.');
+      return;
+    }
+
+    try {
+      setDeletando(true);
+      const payload = {
+        tipo_confirmacao: tipoConfirmacao,
+        senha_master: senhaMestraInput,
+        resposta_seguranca: respostaSegurancaInput,
+      };
+
+      await API.delete(`/cofre/senhas/${senhaParaDeletar.id}`, { data: payload });
+
+      Alert.alert('Sucesso', 'Senha excluída com sucesso!');
+      setModalVisible(false);
+      carregarSenhas();
+    } catch (error) {
+      const msg = error.response?.data?.detail || 'Erro ao excluir senha.';
+      Alert.alert('Erro de Validação', msg);
+    } finally {
+      setDeletando(false);
+    }
   };
 
   const handleLogout = () => {
@@ -92,7 +154,7 @@ export default function DashboardScreen({ navigation }) {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: BACKGROUND_COLOR }]}> 
       <View style={styles.innerContainer}>
-        {/* Barra Superior: Atalho para Perfil e Sair */}
+        {/* Barra Superior */}
         <View style={styles.headerBar}>
           <TouchableOpacity
             style={styles.headerButton}
@@ -170,13 +232,16 @@ export default function DashboardScreen({ navigation }) {
             }
             renderItem={({ item }) => {
               const isVisible = senhasVisiveis[item.id];
+              // Exibe diretamente o valor bruto retornado pela API
+              const valorSenha = item.senha_descriptografada || item.senha || '';
+
               return (
                 <View style={styles.card}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardTitle}>{item.servico}</Text>
                     <Text style={styles.cardSub}>{item.identificador}</Text>
                     <Text style={styles.cardPassword}>
-                      {isVisible ? item.senha : '••••••••••••'}
+                      {isVisible ? valorSenha : '••••••••••••'}
                     </Text>
                   </View>
 
@@ -184,7 +249,7 @@ export default function DashboardScreen({ navigation }) {
                     {/* Botão de Copiar */}
                     <TouchableOpacity
                       style={styles.actionButton}
-                      onPress={() => copiarSenha(item.senha)}
+                      onPress={() => copiarSenha(valorSenha)}
                     >
                       <Text style={styles.actionText}>📋</Text>
                     </TouchableOpacity>
@@ -196,6 +261,14 @@ export default function DashboardScreen({ navigation }) {
                     >
                       <Text style={styles.actionText}>{isVisible ? '🙈' : '👁️'}</Text>
                     </TouchableOpacity>
+
+                    {/* Botão de Apagar */}
+                    <TouchableOpacity
+                      style={styles.actionButton}
+                      onPress={() => abrirModalDeletar(item)}
+                    >
+                      <Text style={styles.actionText}>🗑️</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
               );
@@ -203,6 +276,80 @@ export default function DashboardScreen({ navigation }) {
           />
         )}
       </View>
+
+      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
+      <Modal visible={modalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Confirmar Exclusão</Text>
+            <Text style={styles.modalSub}>
+              Para apagar a senha de <Text style={{ fontWeight: 'bold', color: '#F8FAFC' }}>{senhaParaDeletar?.servico}</Text>, confirme sua identidade:
+            </Text>
+
+            <View style={styles.tabContainer}>
+              <TouchableOpacity
+                style={[styles.tab, tipoConfirmacao === 'senha' && styles.tabActive]}
+                onPress={() => setTipoConfirmacao('senha')}
+              >
+                <Text style={tipoConfirmacao === 'senha' ? styles.tabTextActive : styles.tabText}>Senha Mestra</Text>
+              </TouchableOpacity>
+
+              {perguntaTexto ? (
+                <TouchableOpacity
+                  style={[styles.tab, tipoConfirmacao === 'pergunta' && styles.tabActive]}
+                  onPress={() => setTipoConfirmacao('pergunta')}
+                >
+                  <Text style={tipoConfirmacao === 'pergunta' ? styles.tabTextActive : styles.tabText}>Pergunta</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {tipoConfirmacao === 'senha' ? (
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Digite sua senha mestra"
+                placeholderTextColor="#94A3B8"
+                secureTextEntry
+                value={senhaMestraInput}
+                onChangeText={setSenhaMestraInput}
+              />
+            ) : (
+              <View>
+                <Text style={styles.labelPergunta}>{perguntaTexto}</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Sua resposta secreta"
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry
+                  value={respostaSegurancaInput}
+                  onChangeText={setRespostaSegurancaInput}
+                />
+              </View>
+            )}
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => setModalVisible(false)}
+              >
+                <Text style={styles.cancelBtnText}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.confirmBtn}
+                onPress={confirmarExclusao}
+                disabled={deletando}
+              >
+                {deletando ? (
+                  <ActivityIndicator color="#FFF" size="small" />
+                ) : (
+                  <Text style={styles.confirmBtnText}>Apagar</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -282,6 +429,58 @@ const styles = StyleSheet.create({
   cardSub: { color: '#94A3B8', fontSize: 13, marginTop: 2 },
   cardPassword: { color: '#60A5FA', fontSize: 15, fontWeight: 'bold', marginTop: 6 },
   cardActions: { flexDirection: 'row', alignItems: 'center' },
-  actionButton: { padding: 8, marginLeft: 4 },
+  actionButton: { padding: 6, marginLeft: 4 },
   actionText: { fontSize: 18 },
+
+  /* ESTILOS DO MODAL */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#1E293B',
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#F8FAFC', textAlign: 'center' },
+  modalSub: { fontSize: 14, color: '#94A3B8', textAlign: 'center', marginVertical: 10 },
+  tabContainer: {
+    flexDirection: 'row',
+    marginVertical: 12,
+    backgroundColor: '#0F172A',
+    borderRadius: 8,
+    padding: 2,
+  },
+  tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 },
+  tabActive: { backgroundColor: '#2563EB' },
+  tabText: { color: '#94A3B8', fontWeight: '600', fontSize: 13 },
+  tabTextActive: { color: '#FFF', fontWeight: 'bold', fontSize: 13 },
+  labelPergunta: { fontSize: 13, fontWeight: '600', color: '#38BDF8', marginBottom: 8 },
+  modalInput: {
+    backgroundColor: '#0F172A',
+    color: '#FFF',
+    borderWidth: 1,
+    borderColor: '#334155',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
+  cancelBtn: { padding: 10, justifyContent: 'center' },
+  cancelBtnText: { color: '#94A3B8', fontWeight: 'bold' },
+  confirmBtn: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    justify: 'center',
+  },
+  confirmBtnText: { color: '#FFF', fontWeight: 'bold' },
 });
