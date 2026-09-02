@@ -114,13 +114,13 @@ def recuperar_chave_mestra(dados: schemas.RecuperarAcessoSchema, db: Session = D
     return {"message": "Cofre desbloqueado com sucesso! Faça login com a nova Chave Mestra."}
 
 @app.get("/perguntas/minhas")
-def listar_minhas_perguntas(usuario_atual=Depends(obter_usuario_logado), db=Depends(get_db)):
+def listar_minhas_perguntas(usuario_atual=Depends(decodificar_token_acesso), db=Depends(get_db)):
     # Retorna o ID e o Texto da pergunta (sem expor as respostas por segurança)
     perguntas = db.query(PerguntaSeguranca).filter(PerguntaSeguranca.usuario_id == usuario_atual.id).all()
     return [{"id": p.id, "pergunta": p.pergunta} for p in perguntas]
 
 @app.put("/perguntas/atualizar")
-def atualizar_pergunta(payload: AtualizarPerguntaSchema, usuario_atual=Depends(obter_usuario_logado), db=Depends(get_db)):
+def atualizar_pergunta(payload: AtualizarPerguntaSchema, usuario_atual=Depends(decodificar_token_acesso), db=Depends(get_db)):
     # 1. Valida a Senha Mestra do usuário antes de permitir qualquer alteração
     if not verificar_senha(payload.senha_master, usuario_atual.senha_master_hash):
         raise HTTPException(
