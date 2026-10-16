@@ -13,8 +13,8 @@ class Usuario(Base):
     bloqueado = Column(Boolean, default=False, nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     nome = Column(String, nullable=True)
-    cpf = Column(String, nullable=True)
-    telefone = Column(String, nullable=True)
+    cpf = Column(String, unique=True, nullable=True)
+    telefone = Column(String, unique=True, nullable=True)
 
     perguntas = relationship("PerguntaSeguranca", back_populates="usuario", cascade="all, delete-orphan")
     senhas = relationship("SenhaCofre", back_populates="usuario", cascade="all, delete-orphan")

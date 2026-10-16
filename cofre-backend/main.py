@@ -1,20 +1,25 @@
 from fastapi import FastAPI, Depends, APIRouter, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from schemas import PerfilUpdate, MesclarCofresRequest
 from sqlalchemy.orm import Session
-from sqlalchemy import text
-from database import engine, Base, get_db
+from sqlalchemy import text, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import or_
-import models, schemas, security
-from security import obter_usuario_logado
+from typing import Optional
+
+from database import engine, Base, get_db
+import models
+import schemas
+import security
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="API Cofre de Senhas", version="1.0.0")
+
 oauth2_scheme = HTTPBearer()
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> models.Usuario:
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme), 
+    db: Session = Depends(get_db)
+) -> models.Usuario:
     payload = security.decodificar_token_acesso(credentials.credentials)
     if not payload or not payload.get("sub"):
         raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
@@ -26,7 +31,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(oauth2_
         raise HTTPException(status_code=403, detail="Cofre bloqueado. Realize a recuperação.")
     return usuario
 
-# --- AUTENTICAÇÃO E BLOQUEIO APÓS 5 TENTATIVAS ---
+# --- AUTENTICAÇÃO E LOGIN ---
 
 @app.post("/cadastrar", response_model=schemas.UsuarioResponse, status_code=201)
 def cadastrar_usuario(usuario: schemas.UsuarioCreate, db: Session = Depends(get_db)):
@@ -51,7 +56,10 @@ def login_chave_mestra(credentials: schemas.LoginMasterSchema, db: Session = Dep
     if usuario.bloqueado or usuario.tentativas_falhas >= 5:
         usuario.bloqueado = True
         db.commit()
-        raise HTTPException(status_code=403, detail="Cofre BLOQUEADO! Limite de 5 tentativas excedido. Recupere com as perguntas.")
+        raise HTTPException(
+            status_code=403, 
+            detail="Cofre BLOQUEADO! Limite de 5 tentativas excedido. Recupere com as perguntas."
+        )
 
     if not security.verificar_senha(credentials.master_password, usuario.master_password_hash):
         usuario.tentativas_falhas += 1
@@ -72,21 +80,92 @@ def login_chave_mestra(credentials: schemas.LoginMasterSchema, db: Session = Dep
 
 # --- PERGUNTAS DE SEGURANÇA E RECUPERAÇÃO ---
 
+@app.get("/perguntas/minhas")
+def listar_minhas_perguntas(
+    current_user: models.Usuario = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    try:
+        perguntas = db.query(models.PerguntaSeguranca).filter(
+            models.PerguntaSeguranca.usuario_id == current_user.id
+        ).all()
+        return [{"id": p.id, "pergunta": p.pergunta} for p in perguntas]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erro no banco: {str(e)}")
+
 @app.post("/perguntas", response_model=schemas.PerguntaResponse, status_code=201)
 def adicionar_pergunta(
     pergunta: schemas.PerguntaCreate,
     current_user: models.Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    if not pergunta.pergunta.strip() or not pergunta.resposta.strip():
+        raise HTTPException(status_code=400, detail="Pergunta e resposta são obrigatórias para criação.")
+
     nova = models.PerguntaSeguranca(
         usuario_id=current_user.id,
-        pergunta=pergunta.pergunta,
-        resposta_hash=security.gerar_hash(pergunta.resposta)
+        pergunta=pergunta.pergunta.strip(),
+        resposta_hash=security.gerar_hash(pergunta.resposta.strip())
     )
     db.add(nova)
     db.commit()
     db.refresh(nova)
     return nova
+
+@app.put("/perguntas/{pergunta_id}", status_code=status.HTTP_200_OK)
+def atualizar_pergunta_por_id(
+    pergunta_id: int,
+    dados: schemas.PerguntaUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_user)
+):
+    pergunta_db = db.query(models.PerguntaSeguranca).filter(
+        models.PerguntaSeguranca.id == pergunta_id,
+        models.PerguntaSeguranca.usuario_id == current_user.id
+    ).first()
+
+    if not pergunta_db:
+        raise HTTPException(status_code=404, detail="Pergunta não encontrada.")
+
+    tem_pergunta = dados.pergunta is not None and len(dados.pergunta.strip()) > 0
+    tem_resposta = dados.resposta is not None and len(dados.resposta.strip()) > 0
+
+    if not tem_pergunta and not tem_resposta:
+        raise HTTPException(status_code=400, detail="Informe ao menos a pergunta ou a resposta para atualizar.")
+
+    if tem_pergunta:
+        pergunta_db.pergunta = dados.pergunta.strip()
+    
+    if tem_resposta:
+        pergunta_db.resposta_hash = security.gerar_hash(dados.resposta.strip())
+
+    db.commit()
+    db.refresh(pergunta_db)
+
+    return {
+        "id": pergunta_db.id,
+        "pergunta": pergunta_db.pergunta,
+        "mensagem": "Atualizado com sucesso!"
+    }
+
+@app.delete("/perguntas/{pergunta_id}", status_code=status.HTTP_200_OK)
+def deletar_pergunta(
+    pergunta_id: int, 
+    db: Session = Depends(get_db), 
+    current_user: models.Usuario = Depends(get_current_user)
+):
+    pergunta_db = db.query(models.PerguntaSeguranca).filter(
+        models.PerguntaSeguranca.id == pergunta_id,
+        models.PerguntaSeguranca.usuario_id == current_user.id
+    ).first()
+
+    if not pergunta_db:
+        raise HTTPException(status_code=404, detail="Pergunta não encontrada.")
+
+    db.delete(pergunta_db)
+    db.commit()
+
+    return {"mensagem": "Pergunta removida com sucesso!"}
 
 @app.get("/perguntas/recuperacao/{email}", response_model=list[schemas.PerguntaResponse])
 def obter_perguntas_para_recuperacao(email: str, db: Session = Depends(get_db)):
@@ -105,7 +184,8 @@ def recuperar_chave_mestra(dados: schemas.RecuperarAcessoSchema, db: Session = D
     dict_p = {p.id: p.resposta_hash for p in perguntas}
 
     for r in dados.respostas:
-        if r.pergunta_id not in dict_p or not security.verificar_hash(r.resposta, dict_p[r.pergunta_id]):
+        # ✅ CORREÇÃO: alterado de security.verificar_hash para security.verificar_senha
+        if r.pergunta_id not in dict_p or not security.verificar_senha(r.resposta.strip(), dict_p[r.pergunta_id]):
             raise HTTPException(status_code=401, detail="Resposta incorreta. Falha na recuperação.")
 
     usuario.master_password_hash = security.gerar_hash(dados.nova_master_password)
@@ -113,41 +193,6 @@ def recuperar_chave_mestra(dados: schemas.RecuperarAcessoSchema, db: Session = D
     usuario.tentativas_falhas = 0
     db.commit()
     return {"message": "Cofre desbloqueado com sucesso! Faça login com a nova Chave Mestra."}
-
-@app.get("/perguntas/minhas")
-def listar_minhas_perguntas(usuario_atual=Depends(obter_usuario_logado), db=Depends(get_db)):
-    # Retorna o ID e o Texto da pergunta (sem expor as respostas por segurança)
-    perguntas = db.query(PerguntaSeguranca).filter(PerguntaSeguranca.usuario_id == usuario_atual.id).all()
-    return [{"id": p.id, "pergunta": p.pergunta} for p in perguntas]
-
-@app.put("/perguntas/atualizar")
-def atualizar_pergunta(payload: AtualizarPerguntaSchema, usuario_atual=Depends(obter_usuario_logado), db=Depends(get_db)):
-    # 1. Valida a Senha Mestra do usuário antes de permitir qualquer alteração
-    if not verificar_senha(payload.senha_master, usuario_atual.senha_master_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Senha mestra incorreta. Alteração negada."
-        )
-
-    # 2. Busca a pergunta cadastrada pertencente a este usuário
-    pergunta_db = db.query(PerguntaSeguranca).filter(
-        PerguntaSeguranca.id == payload.pergunta_id,
-        PerguntaSeguranca.usuario_id == usuario_atual.id
-    ).first()
-
-    if not pergunta_db:
-        raise HTTPException(status_code=404, detail="Pergunta de segurança não encontrada.")
-
-    # 3. Altera a string da pergunta (se fornecida)
-    if payload.nova_pergunta:
-        pergunta_db.pergunta = payload.nova_pergunta.strip()
-
-    # 4. Altera a resposta (se fornecida) salvando o hash
-    if payload.nova_resposta:
-        pergunta_db.resposta_hash = gerar_hash(payload.nova_resposta)
-
-    db.commit()
-    return {"message": "Pergunta de segurança atualizada com sucesso!"}
 
 # --- OPERAÇÕES DO COFRE ---
 
@@ -192,7 +237,6 @@ def deletar_senha(
     current_user: models.Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # 1. Verifica se a senha existe e pertence ao usuário
     item_senha = db.query(models.SenhaCofre).filter(
         models.SenhaCofre.id == senha_id,
         models.SenhaCofre.usuario_id == current_user.id
@@ -201,7 +245,6 @@ def deletar_senha(
     if not item_senha:
         raise HTTPException(status_code=404, detail="Senha não encontrada.")
 
-    # 2. Validação de Segurança
     if req.tipo_confirmacao == "senha":
         if not req.senha_master or not security.verificar_senha(req.senha_master, current_user.master_password_hash):
             raise HTTPException(status_code=400, detail="Senha mestra incorreta.")
@@ -214,13 +257,13 @@ def deletar_senha(
         if not pergunta_obj:
             raise HTTPException(status_code=400, detail="Nenhuma pergunta de segurança cadastrada.")
 
-        if not req.resposta_seguranca or not security.verificar_senha(req.resposta_seguranca.strip().lower(), pergunta_obj.resposta_hash):
+        # ✅ CORREÇÃO: adicionado .strip() para evitar falhas com espaços extras
+        if not req.resposta_seguranca or not security.verificar_senha(req.resposta_seguranca.strip(), pergunta_obj.resposta_hash):
             raise HTTPException(status_code=400, detail="Resposta de segurança incorreta.")
 
     else:
         raise HTTPException(status_code=400, detail="Tipo de confirmação inválido.")
 
-    # 3. Exclusão do registro
     db.delete(item_senha)
     db.commit()
 
@@ -228,15 +271,24 @@ def deletar_senha(
 
 # --- GERENCIAMENTO DE PERFIL ---
 
+@app.get("/perfil", summary="Obter dados do Perfil Logado")
+def obter_perfil(
+    current_user: models.Usuario = Depends(get_current_user)
+):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "nome": getattr(current_user, "nome", None),
+        "cpf": getattr(current_user, "cpf", None),
+        "telefone": getattr(current_user, "telefone", None)
+    }
+
 @app.put("/perfil", summary="Atualizar / Preencher Perfil do Usuário")
 def atualizar_perfil(
     dados: schemas.PerfilUpdate,
     current_user: models.Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Atualiza as informações do perfil do usuário logado (Nome, CPF, Telefone).
-    """
     if dados.nome is not None:
         current_user.nome = dados.nome
     if dados.cpf is not None:
@@ -251,7 +303,6 @@ def atualizar_perfil(
         db.refresh(current_user)
     except IntegrityError as e:
         db.rollback()
-        # Identifica o tipo de violação
         err_msg = str(e.orig)
         if "usuarios_telefone_key" in err_msg:
             raise HTTPException(status_code=400, detail="Este telefone já está cadastrado em outra conta.")
@@ -273,30 +324,12 @@ def atualizar_perfil(
         }
     }
 
-@app.get("/perfil", summary="Obter dados do Perfil Logado")
-def obter_perfil(
-    current_user: models.Usuario = Depends(get_current_user)
-):
-    """
-    Retorna os dados do perfil do usuário autenticado.
-    """
-    return {
-        "id": current_user.id,
-        "email": current_user.email,
-        "nome": current_user.nome,
-        "cpf": current_user.cpf,
-        "telefone": current_user.telefone
-    }
-
 @app.post("/perfil/verificar-duplicidade", summary="Verifica duplicidade de perfil")
 def verificar_duplicidade(
     dados: schemas.PerfilUpdate,
     current_user: models.Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Verifica se o e-mail, telefone ou CPF informados pertencem a OUTRO usuário.
-    """
     filtros = []
 
     if dados.email:
@@ -306,18 +339,15 @@ def verificar_duplicidade(
     if dados.cpf:
         filtros.append(models.Usuario.cpf == dados.cpf)
 
-    # Se nenhum campo foi preenchido, não há duplicidade
     if not filtros:
         return {"duplicado": False}
 
-    # Busca outro usuário que possua o mesmo e-mail, telefone ou CPF
     usuario_existente = db.query(models.Usuario).filter(
         models.Usuario.id != current_user.id,
         or_(*filtros)
     ).first()
 
     if usuario_existente:
-        # Identifica exatamente qual campo gerou o conflito
         campo_conflito = "desconhecido"
         valor_conflito = ""
 
@@ -340,7 +370,6 @@ def verificar_duplicidade(
 
     return {"duplicado": False}
 
-
 @app.post("/perfil/mesclar-cofres")
 def mesclar_cofres(
     req: schemas.MesclarCofresRequest,
@@ -354,7 +383,6 @@ def mesclar_cofres(
         )
 
     try:
-        # Uso do CAST(... AS ...) para evitar conflitos com os dois pontos ':' do SQLAlchemy
         query = text("""
             SELECT mesclar_cofres(
                 CAST(:destino AS INTEGER),
@@ -378,13 +406,7 @@ def mesclar_cofres(
         return {"sucesso": True, "mensagem": "Cofres unificados com sucesso."}
     except Exception as e:
         db.rollback()
-        print("--- ERRO DETALHADO DA MESCLAGEM ---")
-        print(str(e))
-        print("-----------------------------------")
-        
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Erro ao executar mesclagem no banco de dados: {str(e)}"
         )
-
-    

@@ -1,7 +1,8 @@
 from typing import Optional, List
-
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
+
+# --- AUTENTICAÇÃO E USUÁRIO ---
 
 class UsuarioCreate(BaseModel):
     email: EmailStr
@@ -25,14 +26,19 @@ class UsuarioResponse(BaseModel):
     class Config:
         from_attributes = True
 
+# --- PERGUNTAS DE SEGURANÇA ---
+
 class PerguntaCreate(BaseModel):
     pergunta: str = Field(min_length=3)
     resposta: str = Field(min_length=1)
 
+class PerguntaUpdate(BaseModel):
+    pergunta: Optional[str] = None
+    resposta: Optional[str] = None
+
 class PerguntaResponse(BaseModel):
     id: int
     pergunta: str
-    criado_em: datetime
 
     class Config:
         from_attributes = True
@@ -46,11 +52,7 @@ class RecuperarAcessoSchema(BaseModel):
     respostas: List[RespostaVerificacao]
     nova_master_password: str = Field(min_length=6)
 
-class AtualizarPerguntaSchema(BaseModel):
-    pergunta_id: int
-    nova_pergunta: Optional[str] = None
-    nova_resposta: Optional[str] = None
-    senha_master: str
+# --- OPERAÇÕES DO COFRE ---
 
 class SenhaCofreCreate(BaseModel):
     servico: str = Field(min_length=1)
@@ -72,6 +74,8 @@ class DeletarSenhaRequest(BaseModel):
     senha_master: Optional[str] = None
     resposta_seguranca: Optional[str] = None
 
+# --- GERENCIAMENTO DE PERFIL ---
+
 class PerfilUpdate(BaseModel):
     usuario_atual_id: Optional[int] = None
     nome: Optional[str] = None
@@ -82,5 +86,5 @@ class PerfilUpdate(BaseModel):
 class MesclarCofresRequest(BaseModel):
     usuario_destino_id: int
     usuario_origem_id: int
-    campo_duplicado: str  # 'email', 'telefone' ou 'cpf'
+    campo_duplicado: str
     valor_duplicado: str
