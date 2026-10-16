@@ -9,12 +9,18 @@ from database import engine, Base, get_db
 import models
 import schemas
 import security
+import time
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="API Cofre de Senhas", version="1.0.0")
 
 oauth2_scheme = HTTPBearer()
+
+# --- Limite de tentativas da recuperação (guardado na memória do servidor) ---
+MAX_TENTATIVAS_RECUPERACAO = 5
+BLOQUEIO_RECUPERACAO_SEGUNDOS = 15 * 60
+tentativas_recuperacao = {}  # e-mail -> {"falhas": int, "bloqueado_ate": float}
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme), 
@@ -176,22 +182,59 @@ def obter_perguntas_para_recuperacao(email: str, db: Session = Depends(get_db)):
 
 @app.post("/recuperar-chave-mestra")
 def recuperar_chave_mestra(dados: schemas.RecuperarAcessoSchema, db: Session = Depends(get_db)):
-    usuario = db.query(models.Usuario).filter(models.Usuario.email == dados.email).first()
-    if not usuario:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    chave = dados.email.strip().lower()
+    agora = time.time()
+    estado = tentativas_recuperacao.get(chave, {"falhas": 0, "bloqueado_ate": 0})
 
-    perguntas = db.query(models.PerguntaSeguranca).filter(models.PerguntaSeguranca.usuario_id == usuario.id).all()
+    # 1) Está bloqueado por excesso de tentativas?
+    if estado["bloqueado_ate"] > agora:
+        minutos = int((estado["bloqueado_ate"] - agora) // 60) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"Muitas tentativas. Tente novamente em {minutos} minuto(s)."
+        )
+
+    def registrar_falha():
+        estado["falhas"] += 1
+        if estado["falhas"] >= MAX_TENTATIVAS_RECUPERACAO:
+            estado["falhas"] = 0
+            estado["bloqueado_ate"] = time.time() + BLOQUEIO_RECUPERACAO_SEGUNDOS
+        tentativas_recuperacao[chave] = estado
+
+    # 2) A nova chave mestra precisa ser minimamente forte
+    if len(dados.nova_master_password) < 8:
+        raise HTTPException(status_code=400, detail="A nova chave mestra deve ter pelo menos 8 caracteres.")
+
+    # 3) Busca o usuário e as perguntas (sem revelar se o e-mail existe)
+    usuario = db.query(models.Usuario).filter(models.Usuario.email == dados.email).first()
+    perguntas = []
+    if usuario:
+        perguntas = db.query(models.PerguntaSeguranca).filter(
+            models.PerguntaSeguranca.usuario_id == usuario.id
+        ).all()
     dict_p = {p.id: p.resposta_hash for p in perguntas}
 
+    # 4) Exige responder TODAS as perguntas cadastradas (lista vazia não passa)
+    ids_enviados = {r.pergunta_id for r in dados.respostas}
+    if not usuario or not dict_p or ids_enviados != set(dict_p):
+        registrar_falha()
+        raise HTTPException(
+            status_code=401,
+            detail="Não foi possível validar a recuperação. Responda todas as perguntas cadastradas."
+        )
+
+    # 5) Confere cada resposta
     for r in dados.respostas:
-        # ✅ CORREÇÃO: alterado de security.verificar_hash para security.verificar_senha
-        if r.pergunta_id not in dict_p or not security.verificar_senha(r.resposta.strip(), dict_p[r.pergunta_id]):
+        if not security.verificar_senha(r.resposta.strip(), dict_p[r.pergunta_id]):
+            registrar_falha()
             raise HTTPException(status_code=401, detail="Resposta incorreta. Falha na recuperação.")
 
+    # 6) Tudo certo: redefine a chave mestra e desbloqueia
     usuario.master_password_hash = security.gerar_hash(dados.nova_master_password)
     usuario.bloqueado = False
     usuario.tentativas_falhas = 0
     db.commit()
+    tentativas_recuperacao.pop(chave, None)
     return {"message": "Cofre desbloqueado com sucesso! Faça login com a nova Chave Mestra."}
 
 # --- OPERAÇÕES DO COFRE ---
