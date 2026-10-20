@@ -453,3 +453,11 @@ def mesclar_cofres(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Erro ao executar mesclagem no banco de dados: {str(e)}"
         )
+
+@app.get("/versao")
+def versao_app():
+    return {
+        "versao_atual": "1.0.1",
+        "link": "file:///C:/Users/User/Documents/PROGRAMACAO/BACK/Cofre%20de%20Senhas/cofre-site/index.html",
+        "obrigatoria": False
+    }
