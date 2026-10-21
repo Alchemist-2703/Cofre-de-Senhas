@@ -12,6 +12,7 @@
         border-radius: 8px; text-decoration: none; font-weight: bold; margin: 16px 0; }
     .aviso { background: #FEF3C7; border-radius: 8px; padding: 12px; font-size: 14px; }
     ol { padding-left: 20px; font-size: 14px; }
+    .versao { font-size: 13px; color: #64748B; margin: 0 0 8px; }
     img { display: block; margin: 16px auto 0; }
   </style>
 </head>
@@ -19,6 +20,7 @@
   <div class="card">
     <h1>Cofre de Senhas (versão Beta)</h1>
     <p>Disponível apenas para <strong>Android</strong>.</p>
+    <p class="versao">Versão atual: <span id="versao"></span></p>
 
     <a class="btn" href="cofre-de-senhas(beta).apk" download>Baixar o app (APK)</a>
 
@@ -35,6 +37,12 @@
     </ol>
 
     <img src="qrcode-cofre-v2.svg" alt="QR code desta página" width="180">
+
+    <script>
+      const VERSAO = "1.0.1";
+      document.getElementById("versao").textContent = VERSAO;
+    </script>
+    
   </div>
 </body>
 </html>
