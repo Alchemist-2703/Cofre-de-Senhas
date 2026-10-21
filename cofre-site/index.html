@@ -12,16 +12,13 @@
         border-radius: 8px; text-decoration: none; font-weight: bold; margin: 16px 0; }
     .aviso { background: #FEF3C7; border-radius: 8px; padding: 12px; font-size: 14px; }
     ol { padding-left: 20px; font-size: 14px; }
-    .versao { font-size: 13px; color: #64748B; margin: 0 0 8px; }
-    #qrcode { width: 180px; height: 180px; margin: 16px auto 0; padding: 12px; background: #fff; }
-    #qrcode img { width: 180px; height: 180px; }
+    img { display: block; margin: 16px auto 0; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Cofre de Senhas (versão Beta)</h1>
     <p>Disponível apenas para <strong>Android</strong>.</p>
-    <p class="versao">Versão atual: <span id="versao"></span></p>
 
     <a class="btn" href="cofre-de-senhas(beta).apk" download>Baixar o app (APK)</a>
 
@@ -37,33 +34,7 @@
       <li>No primeiro acesso, a conexão pode demorar até cerca de 1 minuto, pois o servidor "acorda" depois de ficar parado.</li>
     </ol>
 
-    <div id="qrcode"></div>
+    <img src="qrcode-cofre-v2.svg" alt="QR code desta página" width="180">
   </div>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
-    integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA=="
-    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script>
-    // ====== O QUE VOCÊ ATUALIZA A CADA VERSÃO ======
-    const VERSAO = "1.0.1";   // mesma versão do app.json e da API
-    const LINK_DO_QR = "";    // deixe vazio: o QR aponta para esta própria página
-    // ================================================
-
-    document.getElementById("versao").textContent = VERSAO;
-
-    try {
-      const link = LINK_DO_QR || (location.origin + location.pathname);
-      new QRCode(document.getElementById("qrcode"), {
-        text: link,
-        width: 360,
-        height: 360,
-        colorDark: "#1E3A8A",
-        colorLight: "#FFFFFF",
-        correctLevel: QRCode.CorrectLevel.M
-      });
-    } catch (erro) {
-      document.getElementById("qrcode").style.display = "none";
-    }
-  </script>
 </body>
 </html>
